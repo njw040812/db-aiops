@@ -1,547 +1,356 @@
-# 🤖 Multi-Agent AIOps — 多 Agent 智能运维系统
+# DB-AIOps · 数据库智能运维多 Agent 系统
 
-<div align="center">
+> 把「告警 → 根因 → 修复提案 → 变更审批 → 执行」做成一条可回放、可审计、可阻断的流水线。
+> 面向 MySQL 一主两从场景，Python 单语言实现，不依赖外部服务即可完整跑通。
 
-**企业级多 Agent 智能运维平台 | Python · Java · Go 三语言实现**
+> **来源说明**：本仓库是开源项目
+> [bcefghj/multi-agent-aiops](https://github.com/bcefghj/multi-agent-aiops)（MIT）的 GitHub fork，
+> 在其 Python 实现基础上二次开发。原项目版权归原作者，本仓库修改部分归倪建伟。
+> 具体改动见文末「来源与致谢」。
 
-**面向大厂面试的完整项目：代码 + 架构文档 + 八股文 + 简历模板 + STAR 话术**
-
-[![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)](python/)
-[![Java](https://img.shields.io/badge/Java-21-orange?logo=openjdk)](java/)
-[![Go](https://img.shields.io/badge/Go-1.23-cyan?logo=go)](golang/)
-[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-
-</div>
-
----
-
-## 📖 这个项目是什么？
-
-你是否遇到过这些问题：
-- 运维团队每天被 **200+ 条告警**淹没，大部分是误报
-- 服务出了问题，排查根因要花 **40 分钟**
-- 凌晨 3 点被电话叫醒，半睡半醒地排查故障
-
-本项目用 **4 个 AI Agent 协作**，自动完成从「告警检测」到「故障修复」的全流程，把 MTTR（平均修复时间）从 40 分钟降到 5 分钟。
-
-```
-告警来了
-  ↓  Agent 1：这是真的异常吗？（时序分析，过滤误报）
-  ↓  Agent 2：根因在哪里？（知识图谱推理）
-  ↓  Agent 3：怎么修复？能自动执行吗？（安全护栏 + 分级策略）
-  ↓  Agent 4：这个操作风险有多大？需要审批吗？（风险评分）
-  ✅ 5 分钟内修复完成，全程自动
-```
-
-> **适用人群**：准备腾讯/美团/字节/阿里 AIOps 方向面试的同学、想学多 Agent 系统设计的开发者、对智能运维感兴趣的 SRE 工程师
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
+![Tests](https://img.shields.io/badge/tests-108%20passed-brightgreen)
+![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
-## 🎯 面试价值
+## 1. 这个项目解决什么问题
 
-| 方向 | 对应招聘岗位 | 薪资范围 |
-|------|------------|---------|
-| Python + LLM Agent | 腾讯 AI Agent 开发工程师 | 30-60k · 15薪 |
-| Java 后端 | 美团/阿里 智能运维平台后端 | 25-50k · 16薪 |
-| Go 云原生 | 字节/腾讯 SRE/运维平台 | 25-45k · 15薪 |
+数据库运维有三个反复出现的问题：
 
-> AI Agent 工程师岗位需求同比增长 **380%**（2026年数据）
+| 问题 | 现实表现 | 本项目的做法 |
+|------|---------|-------------|
+| 告警噪音 | 主从延迟、连接数、慢查询各自为战，凌晨被 P3 告警叫醒 | 按指标配置检测方向与阈值，多算法投票 + 指纹去重 + 同服务告警收敛 |
+| 根因靠人 | 看到 `mysql-replica-2` 延迟高，要翻 CMDB、变更记录、主机监控 | 知识图谱遍历依赖链 + 24h 变更关联 + 归一化贝叶斯打分，输出候选根因和证据 |
+| 变更靠胆量 | 在线 DDL、主从切换、KILL 会话，改错一次就是事故 | 14 个 DBA Playbook + 6 因子风险评分 + L0/L1/L2 审批门禁 + 审批后才执行 |
 
----
-
-## 🏗️ 系统架构
-
-### 整体架构图
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│                       数据采集层                              │
-│   Prometheus（指标）  Loki（日志）  Jaeger（链路）  CMDB      │
-└───────────────────────────┬──────────────────────────────────┘
-                            │ 异常数据
-                   ┌────────▼─────────┐
-                   │  事件总线 Kafka   │  ← 解耦所有 Agent
-                   │  aiops.alerts    │
-                   │  aiops.events    │
-                   │  aiops.commands  │
-                   └────────┬─────────┘
-                            │
-┌───────────────────────────▼──────────────────────────────────┐
-│                   Agent 编排器 Orchestrator                    │
-│                  （状态机 · 条件路由 · 检查点恢复）              │
-│                                                              │
-│  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌──────────┐  │
-│  │ 监控告警   │→ │ 根因分析   │→ │ 故障自愈   │→ │ 变更审批  │  │
-│  │  Agent   │  │  Agent   │  │  Agent   │  │  Agent  │  │
-│  │           │  │           │  │           │  │          │  │
-│  │3-Sigma    │  │知识图谱   │  │Playbook   │  │风险评分  │  │
-│  │EWMA       │  │BFS遍历   │  │dry-run    │  │L0/L1/L2  │  │
-│  │IsoForest  │  │贝叶斯推理 │  │熔断器     │  │审计日志  │  │
-│  └───────────┘  └───────────┘  └───────────┘  └──────────┘  │
-└───────────────────────────┬──────────────────────────────────┘
-                            │
-┌───────────────────────────▼──────────────────────────────────┐
-│                         知识层                                │
-│      Neo4j 知识图谱    向量数据库 RAG    规则引擎              │
-│   （服务拓扑 + 依赖关系 + 历史故障）                           │
-└──────────────────────────────────────────────────────────────┘
-```
-
-### 一次故障的完整处理流程
-
-```
-1. Prometheus 检测到 order-service CPU 使用率 95%
-2. 监控告警 Agent：多算法投票确认异常，生成告警事件
-3. 根因分析 Agent：查知识图谱，发现 order-service 今天有新部署
-                    贝叶斯推理：P(部署引起|CPU高) = 0.54
-4. 故障自愈 Agent：匹配 rollback Playbook（L1级），dry-run 通过
-5. 变更审批 Agent：风险评分 0.16，oncall 自动审批
-6. 执行回滚，5 分钟内恢复正常 ✅
-```
+核心原则只有一句：**没有审批单，不允许执行任何变更。**
 
 ---
 
-## 🚀 快速开始（5 分钟跑起来）
+## 2. 能力清单
 
-### 方式一：最简运行（零外部依赖，推荐小白）
+- **监控告警**：6 个 MySQL 指标策略（主从延迟 / 连接数使用率 / 慢查询 QPS / CPU / 磁盘 / QPS，评测覆盖前 5 个），MAD 鲁棒检测 + EWMA + Isolation Forest 投票，冷启动样本不足时弃权
+- **根因分析**：13 节点 17 条边的服务-数据库-主机拓扑，反向 BFS 找根因候选，变更时间窗关联，后验概率归一化，置信度不足自动转人工
+- **自愈提案**：14 个 Playbook（L0 4 个 / L1 7 个 / L2 3 个），命令模板渲染、爆炸半径评估、dry-run 预检
+- **变更审批**：6 因子风险模型、DDL 变更窗口检查、L2 自动生成 `CHG-` 工单、人工审批/拒绝、失败后自动抬高历史风险
+- **执行安全**：审批状态二次校验、命令白名单与危险模式拦截、幂等检查、熔断器、失败自动回滚
+- **审计**：哈希链追加写 `var/audit/audit-YYYYMMDD.jsonl`，支持整链校验，篡改/删行会被定位
+- **工程化**：FastAPI 17 个接口、Prometheus 文本指标、108 个 pytest 用例、3 个可复现评测脚本
+
+---
+
+## 3. 架构
+
+```
+                    ┌─────────────────────────────────────────────┐
+   Prometheus ─────▶│  MonitorAgent                               │
+   MySQL 指标        │  方向/阈值策略 → MAD·EWMA·iForest 投票       │
+                    │  → 分级 → 指纹去重 → 告警收敛                │
+                    └──────────────────────┬──────────────────────┘
+                                           │ AlertEvent → aiops.alerts
+                    ┌──────────────────────▼──────────────────────┐
+                    │  RCAAgent                                   │
+                    │  知识图谱依赖链 + 24h 变更 + 归一化贝叶斯     │
+                    │  置信度不足 → needs_human → 跳过自愈         │
+                    └──────────────────────┬──────────────────────┘
+                                           │ RCAEvent → aiops.events
+                    ┌──────────────────────▼──────────────────────┐
+                    │  HealAgent（只提案）                         │
+                    │  Playbook 匹配 → 爆炸半径 → dry-run 预检     │
+                    └──────────────────────┬──────────────────────┘
+                                           │ HealEvent(proposed)
+                    ┌──────────────────────▼──────────────────────┐
+                    │  ChangeAgent                                │
+                    │  6 因子风险分 → L0 自动 / L1 当班 / L2 工单   │
+                    │  pending 时工作流在此中断                     │
+                    └──────────────────────┬──────────────────────┘
+                                           │ ChangeEvent(approved) → aiops.audit
+                    ┌──────────────────────▼──────────────────────┐
+                    │  HealAgent.execute（审批后执行）             │
+                    │  熔断 → 白名单 → 幂等 → 执行 → 失败回滚       │
+                    └──────────────────────┬──────────────────────┘
+                                           ▼
+                         InMemoryEventBus / KafkaEventBus
+                         InMemoryKnowledgeGraph / Neo4j
+                         AuditSink（哈希链 JSONL）
+```
+
+一次故障的真实链路（`python -m core.orchestrator` 输出）：
+
+```
+19:37:07  MonitorAgent  注入 120 个正常样本作为 mysql-replica-2 基线
+19:37:08  MonitorAgent  mysql_replication_lag_sec=46.20秒 → critical（ratio=54.43）
+19:37:08  RCAAgent      replica_ddl（置信度 0.50，影响面 0.40）
+19:37:08  HealAgent     propose kill_ddl [L1] 爆炸半径 0.08
+19:37:08  ChangeAgent   approved：当班 DBA 批准（risk=0.241 <= 0.55）
+19:37:08  HealAgent     execute  mysql -h db-node-3 -e "KILL QUERY 1024871;"
+19:37:08  HealAgent     succeeded  SUCCESS(simulated)
+```
+
+注意执行发生在一张 `approved` 变更单之后，而不是在提案时。
+
+---
+
+## 4. 快速开始
+
+要求 Python 3.10+，不需要 Kafka / Neo4j / Docker。
 
 ```bash
-# 克隆项目
-git clone https://github.com/bcefghj/multi-agent-aiops.git
-cd multi-agent-aiops/python
+python -m venv .venv
+.venv\Scripts\activate            # Windows
+# source .venv/bin/activate       # macOS / Linux
 
-# 安装依赖（只装必要的，不需要 Kafka/Neo4j）
-pip install fastapi uvicorn pydantic pydantic-settings numpy scikit-learn structlog
-
-# 启动服务
-python -m uvicorn api.main:app --reload --port 8000
-```
-
-浏览器打开 → **http://localhost:8000/docs**，你会看到完整的 API 文档界面
-
-### 方式二：完整运行（含 Kafka + Neo4j + Grafana）
-
-```bash
-cd python
-
-# 一键启动所有基础设施
-docker-compose up -d
-
-# 等待约 30 秒服务就绪，然后启动主服务
 pip install -r requirements.txt
+```
+
+如果直连 PyPI 很慢，可以换镜像：
+
+```bash
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+跑完整 Demo：
+
+```bash
+python -m core.orchestrator
+```
+
+跑测试：
+
+```bash
+python -m pytest
+# 108 passed
+```
+
+启动 API：
+
+```bash
 python -m uvicorn api.main:app --reload --port 8000
+# http://localhost:8000/docs
 ```
 
-各组件地址：
-- **API 文档**: http://localhost:8000/docs
-- **Neo4j 浏览器**: http://localhost:7474 （账号 neo4j / aiops_password）
-- **Prometheus**: http://localhost:9090
-- **Grafana**: http://localhost:3000 （账号 admin / aiops_admin）
-
-### 方式三：一键 Demo 演示
+跑评测：
 
 ```bash
-cd python
-python -c "import asyncio; from core.orchestrator import run_demo; asyncio.run(run_demo())"
-```
-
-输出示例：
-```
-============================================================
-  故障处理结果
-============================================================
-  事件 ID:    a8f3c2d1-...
-  状态:       resolved
-
-  [告警]
-    名称:     high_cpu_usage
-    严重度:   high
-    服务:     order-service
-    指标值:   95.3
-
-  [根因分析]
-    根因:     近期代码部署引入性能退化
-    置信度:   0.54
-    影响链:   order-service → payment-service → mysql-primary
-    建议动作: rollback, profiling
-
-  [自愈]
-    操作:     rollback
-    级别:     L1（需 oncall 确认）
-    爆炸半径: 0.15
-    Dry-run:  DRY-RUN OK: kubectl rollout undo deployment/order-service
-
-  [审批]
-    状态:     approved
-    风险分:   0.158
-    审批人:   oncall-engineer
-    原因:     L1 approved: risk=0.158
-
-  [工作流节点状态]
-    monitor      → completed
-    rca          → completed
-    heal         → completed
-    change       → completed
-============================================================
+python -m benchmarks.detect_eval     # 异常检测回放
+python -m benchmarks.pipeline_eval   # 端到端流水线性能
+python -m benchmarks.project_stats   # 代码/测试/图谱规模
 ```
 
 ---
 
-## 📁 项目结构详解
+## 5. API 一览
 
-```
-multi-agent-aiops/
-│
-├── 📄 README.md                     ← 你现在看的这个文件
-│
-├── 🐍 python/                       ← Python 实现（推荐先看这个）
-│   ├── agents/
-│   │   ├── base_agent.py            ← Agent 抽象基类（模板方法模式）
-│   │   ├── monitor_agent.py         ← 监控告警 Agent
-│   │   ├── rca_agent.py             ← 根因分析 Agent
-│   │   ├── heal_agent.py            ← 故障自愈 Agent
-│   │   └── change_agent.py          ← 变更审批 Agent
-│   ├── core/
-│   │   ├── orchestrator.py          ← Agent 编排器（状态机）⭐ 最核心
-│   │   ├── event_bus.py             ← 事件总线（Kafka + 内存双模）⭐
-│   │   └── knowledge_graph.py       ← 知识图谱（Neo4j + 内存双模）⭐
-│   ├── models/
-│   │   ├── events.py                ← 所有事件的数据模型
-│   │   └── time_series.py           ← 时序异常检测算法
-│   ├── api/
-│   │   └── main.py                  ← FastAPI 接口入口
-│   ├── config/
-│   │   └── settings.py              ← 全局配置
-│   ├── docker-compose.yml           ← 一键启动基础设施
-│   └── requirements.txt             ← Python 依赖
-│
-├── ☕ java/                          ← Java 实现（Spring Boot 3）
-│   ├── src/main/java/com/aiops/
-│   │   ├── agent/                   ← 4 个 Agent 实现
-│   │   ├── core/                    ← 编排器 + REST Controller
-│   │   └── model/                   ← 数据模型
-│   ├── pom.xml                      ← Maven 依赖
-│   └── src/main/resources/
-│       └── application.yml          ← Spring 配置
-│
-├── 🐹 golang/                       ← Go 实现（Gin + goroutine）
-│   ├── cmd/server/main.go           ← 程序入口
-│   ├── internal/
-│   │   ├── agent/                   ← 4 个 Agent 实现
-│   │   ├── core/                    ← 编排器
-│   │   └── model/                   ← 数据模型
-│   └── go.mod                       ← Go 依赖
-│
-└── 📚 docs/                         ← 文档（面试必看）
-    ├── architecture.md              ← 架构设计文档
-    ├── project-plan.md              ← 项目规划
-    ├── interview/                   ← 🎯 面试材料
-    │   ├── resume-template.md       ← 简历模板（3 个版本）
-    │   ├── star-method.md           ← STAR 话术（含追问应对）
-    │   ├── baguwen.md               ← 八股文 25 道
-    │   └── interview-qa.md          ← 面试 Q&A 80+ 道
-    └── tutorial/                   ← 📖 从 0 到部署教程
-        ├── 01-getting-started.md    ← 入门：理解项目结构
-        ├── 02-event-driven.md       ← 事件驱动架构详解
-        ├── 03-agent-design.md       ← Agent 设计模式
-        ├── 04-knowledge-graph.md    ← 知识图谱详解
-        └── 05-deploy.md             ← 生产部署指南
-```
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/v1/incidents/trigger` | 触发一次故障处理，可传指标和证据 |
+| GET | `/api/v1/incidents` | 故障列表 |
+| GET | `/api/v1/incidents/{id}` | 详情（含 timeline 和节点状态） |
+| POST | `/api/v1/incidents/{id}/approve` | 人工批准并继续执行 |
+| POST | `/api/v1/incidents/{id}/reject` | 人工拒绝 |
+| GET | `/api/v1/topology` | 知识图谱摘要 |
+| GET | `/api/v1/topology/{service}/dependencies` | 依赖链、影响面、近期变更 |
+| POST | `/api/v1/anomaly/detect` | 单点异常检测 |
+| GET | `/api/v1/anomaly/demo` | 回放演示 |
+| GET | `/api/v1/agents/status` | Agent 指标 + 工作流状态 |
+| GET | `/api/v1/playbooks` | 14 个 Playbook |
+| GET | `/api/v1/risk-model` | 风险权重与阈值 |
+| GET | `/api/v1/audit/verify` | 审计链完整性 |
+| GET | `/api/v1/audit/tail` | 最近审计记录 |
+| GET | `/metrics` | Prometheus 文本格式 |
 
----
-
-## 🔌 API 接口说明
-
-启动后访问 http://localhost:8000/docs 查看完整文档，核心接口：
-
-### 触发故障处理流程
+触发示例：
 
 ```bash
-# 使用 Demo 数据（模拟 CPU 告警）
-curl -X POST http://localhost:8000/api/v1/incidents/trigger
-
-# 传入自定义指标数据
 curl -X POST http://localhost:8000/api/v1/incidents/trigger \
   -H "Content-Type: application/json" \
-  -d '{
-    "metric_name": "cpu_usage_percent",
-    "metric_value": 95.3,
-    "target_service": "order-service"
-  }'
-```
-
-### 查看服务拓扑
-
-```bash
-# 查看全部拓扑
-curl http://localhost:8000/api/v1/topology
-
-# 查看某服务的依赖链
-curl http://localhost:8000/api/v1/topology/order-service/dependencies
-```
-
-返回示例：
-```json
-{
-  "service": "order-service",
-  "direct_dependencies": ["payment-service", "inventory-service", "user-service"],
-  "depended_by": ["api-gateway"],
-  "impact_score": 0.091,
-  "dependency_paths": [
-    ["order-service", "payment-service", "mysql-primary"],
-    ["order-service", "inventory-service", "elasticsearch"]
-  ]
-}
-```
-
-### 运行异常检测 Demo
-
-```bash
-curl http://localhost:8000/api/v1/anomaly/demo
-```
-
-返回示例：
-```json
-{
-  "total_points": 200,
-  "anomalies_detected": 3,
-  "anomalies": [
-    {"index": 150, "value": 82.45, "score": 4.21, "actual_anomaly": true},
-    {"index": 170, "value": 19.83, "score": 3.87, "actual_anomaly": true}
-  ]
-}
+  -d '{"metric_name":"mysql_connections_used_ratio","metric_value":0.95,
+       "target_service":"mysql-primary","long_transactions":2}'
 ```
 
 ---
 
-## 💡 核心技术亮点
+## 6. 关键设计（面试重点）
 
-### 1. 时序异常检测 — 多算法投票
+### 6.1 两阶段变更，而不是「先斩后奏」
 
-```python
-# 三种算法同时检测，至少 2 种认为异常才报警（减少误报）
-3-Sigma    → 检测突变（CPU 突然飙高）
-EWMA       → 检测趋势（CPU 缓慢上涨）
-Isolation Forest → 检测多维异常（多个指标同时异常）
-
-投票结果：2/3 投票 = 报警  →  误报率降低 85%
-```
-
-> 📖 算法详解：[docs/tutorial/03-agent-design.md](docs/tutorial/03-agent-design.md)
-
-### 2. 知识图谱根因分析
+`HealAgent` 拆成 `propose()` 和 `execute()`。`execute()` 的第一行就是校验：
 
 ```python
-# 服务拓扑（Neo4j 存储）
-order-service
-  ├── depends on → payment-service → mysql-primary
-  ├── depends on → inventory-service（有近期变更！）
-  └── depends on → user-service
-
-# 贝叶斯推理
-P(部署引起|CPU高) = P(CPU高|部署引起) × P(部署引起) / P(CPU高)
-                  = 0.9 × 0.3 / 0.5 = 0.54 ← 54% 置信度
+if change.approval_status != "approved":
+    raise PermissionError("变更单未批准，拒绝执行")
 ```
 
-> 📖 知识图谱详解：[docs/tutorial/04-knowledge-graph.md](docs/tutorial/04-knowledge-graph.md)
+编排器里 `execute` 节点只有在 `change_event.approval_status == "approved"` 时才被路由到；
+pending 的变更单让工作流停在 `change` 节点，等人工审批后 `resume()` 只跑执行节点，不重跑监控和根因。
 
-### 3. 分级自愈 + 安全护栏
+### 6.2 根因：图谱 + 变更 + 归一化贝叶斯
+
+候选根因的权重是 `prior × likelihood`，然后**除以所有候选的权重和**，保证后验概率守恒：
 
 ```
-L0（全自动）：重启 Pod、扩容、限流  ← 爆炸半径 < 5%，直接执行
-L1（半自动）：回滚版本、改配置      ← 需要 oncall 确认
-L2（人工介入）：数据库操作、全量回滚 ← 需要 TL 审批
-
-安全护栏链：
-dry-run 模拟 → 爆炸半径 < 20%？→ 熔断器开着？→ 审批通过？→ 执行
+posterior_i = prior_i · likelihood_i / Σ_j(prior_j · likelihood_j)
 ```
 
-> 📖 Agent 设计详解：[docs/tutorial/03-agent-design.md](docs/tutorial/03-agent-design.md)
+置信度低于 0.30 或与第二名差距小于 0.05 时标记 `needs_human`，直接跳过自愈。
+这比「让模型硬选一个」更符合运维的实际情况：证据不足时，不动手才是正确动作。
 
-### 4. 事件驱动架构
+### 6.3 检测：单向、鲁棒、可弃权
 
-```python
-# Kafka Topic 设计
-aiops.alerts    ← MonitorAgent 发布告警
-aiops.events    ← RCAAgent 发布分析结果
-aiops.commands  ← HealAgent 发布修复命令
-aiops.audit     ← ChangeAgent 发布审批记录
-*.dlq           ← 死信队列（消费失败的消息）
+- 主从延迟、连接数这类指标只有上冲才危险，双向检测会把「延迟归零」当异常；
+- 均值/标准差会被历史尖刺污染，MAD（中位数绝对偏差）更稳；
+- 历史样本不足 20 个时，所有算法弃权，而不是拿 3 个点算出异常；
+- 告警严重度优先看静态阈值（业务容忍度），统计 ratio 只负责把未越线但明显偏离的告警抬到 medium。
 
-# 双模支持：本地开发用内存队列，生产用 Kafka
-event_bus = create_event_bus(use_kafka=False)  # 本地开发
-event_bus = create_event_bus(use_kafka=True)   # 生产环境
-```
+### 6.4 风险模型：6 个因子，权重和为 1
 
-> 📖 事件驱动详解：[docs/tutorial/02-event-driven.md](docs/tutorial/02-event-driven.md)
-
----
-
-## 🌐 三语言实现对比
-
-| 特性 | 🐍 Python | ☕ Java | 🐹 Go |
-|------|-----------|---------|-------|
-| Agent 抽象 | `ABC` 抽象基类 | `abstract class` | `interface` 隐式实现 |
-| 异步模型 | `asyncio` 协程 | `CompletableFuture` | `goroutine + channel` |
-| 类型安全 | 弱（运行时） | 强（编译时） | 强（编译时） |
-| 并发模型 | 单线程事件循环 | 线程池 | M:N goroutine 调度 |
-| 适用场景 | AI/ML 密集 | 企业后端 | 云原生/运维平台 |
-| 部署体积 | ~200MB | ~150MB（含JRE） | ~15MB（静态链接） |
-| 启动时间 | 2-3s | 5-10s | < 0.5s |
-
-**选哪个版本？**
-- 准备 **AI/大模型/Python 岗**：看 [python/](python/) 目录
-- 准备 **Java 后端岗**：看 [java/](java/) 目录
-- 准备 **Go/云原生/SRE 岗**：看 [golang/](golang/) 目录
-
----
-
-## 🎓 面试准备材料（全套）
-
-| 材料 | 内容 | 链接 |
+| 因子 | 权重 | 说明 |
 |------|------|------|
-| 简历模板 | Python/Java/Go 三套，含量化数据 | [resume-template.md](docs/interview/resume-template.md) |
-| STAR 话术 | 1分钟版 + 3分钟版 + 追问应对 | [star-method.md](docs/interview/star-method.md) |
-| 八股文 | 25 道核心考点，含标准答案 | [baguwen.md](docs/interview/baguwen.md) |
-| 面试 Q&A | 80+ 道高频问题 + 回答思路 | [interview-qa.md](docs/interview/interview-qa.md) |
-| 架构文档 | 系统设计 + 技术选型决策 | [architecture.md](docs/architecture.md) |
+| 爆炸半径 | 0.30 | 图谱影响面 / Playbook 预估 |
+| 操作固有风险 | 0.25 | DDL、主从切换显著更高 |
+| 变更窗口 | 0.15 | 需要窗口的 DDL 在业务时段强制挂起 |
+| 实例关键度 | 0.10 | 主库最高 |
+| 历史成功率 | 0.10 | 失败一次后用 EWMA 抬高后续风险 |
+| 数据丢失风险 | 0.10 | 归档、切换类操作 |
 
-### 八股文核心考点预览
+L0 且 ≤ 0.30 自动放行；L1 且 ≤ 0.55 当班批准；L2 一律生成工单；需要窗口的 DDL 在业务时段直接挂起。
 
-<details>
-<summary>📋 点击展开 — 25 道核心八股文目录</summary>
+### 6.5 审计：可校验的哈希链
 
-**事件驱动架构（必考）**
-- 事件驱动 vs RPC 的区别？
-- 背压（Backpressure）怎么处理？
-- 最终一致性怎么保证？
+每条记录包含 `prev_hash` 与 `hash = SHA256(prev_hash + 规范化JSON(payload))`。
+删掉中间一条、改一个字段，`/api/v1/audit/verify` 都会指出具体文件和行号。
+这对应运维合规里的「谁、什么时候、对哪个实例、做了什么、依据是什么」。
 
-**Kafka（必考）**
-- 如何保证消息不丢？（三个环节）
-- 消费组的工作原理？
-- Exactly-Once 语义怎么实现？
-- 死信队列是什么？
+### 6.6 执行护栏
 
-**Agent 框架**
-- Orchestrator vs Choreography 编排模式？
-- LangGraph 的核心概念？
-- ReAct 范式是什么？
+```
+熔断器 → 爆炸半径上限（超限强制 L2）→ 命令白名单 → 危险模式拦截
+→ 审批门禁 → 幂等检查 → 执行 → 失败回滚
+```
 
-**时序异常检测**
-- 3-Sigma / EWMA / Isolation Forest 各自适用场景？
-- 动态阈值 vs 静态阈值？
-- 多算法投票机制的原理？
-
-**知识图谱**
-- 图数据库 vs 关系型数据库？
-- BFS vs DFS 在根因分析中怎么选？
-- 贝叶斯推理在根因分析中怎么用？
-
-**安全与可靠性**
-- 熔断器模式的三个状态？
-- 爆炸半径怎么评估？
-- dry-run 怎么实现？
-
-**分布式系统（通用）**
-- CAP 定理？
-- Saga 模式？
-
-**设计模式（Java 重点）**
-- 项目用了哪些设计模式？（6 种）
-
-**Go 特色**
-- goroutine vs Java Thread？
-- sync.Map vs map + Mutex？
-
-</details>
-
-### STAR 话术预览
-
-<details>
-<summary>💬 点击展开 — 1 分钟版面试话术</summary>
-
-> "这是一个基于事件驱动的多 Agent AIOps 系统。
-> 四个 Agent 分别负责告警检测、根因分析、故障自愈和变更审批，
-> 通过 Kafka 事件总线异步协作。
-> 技术亮点是用 Neo4j 知识图谱做根因推理，
-> 多算法投票做异常检测，分级策略加安全护栏做自愈。
-> 上线后 MTTR 降低 87%，告警误报减少 85%。"
-
-详细版（3 分钟）和追问应对脚本见 → [star-method.md](docs/interview/star-method.md)
-
-</details>
+默认执行器是 `SimulatedExecutor`，只做模拟，不碰任何真实数据库。
+真实执行需要显式设置 `AIOPS_ENABLE_REAL_EXECUTION=true`，且仍然受白名单约束。
 
 ---
 
-## 📚 从零开始学习路径
+## 7. 评测结果
 
-推荐按以下顺序学习：
+数据来自 `benchmarks/*.py`，可复现；结果是合成数据集，不代表生产流量。
+
+### 7.1 异常检测回放
+
+5 个指标 × 600 个采样点，16 个注入故障窗口（含 1 个 CPU 骤降），逐点回放：
+
+| 检测器 | 精确率 | 召回率 | F1 | 每千点误报 | 窗口检出率 | 首告警时延（点） |
+|--------|--------|--------|----|-----------|-----------|----------------|
+| 静态阈值（warn） | 1.000 | 0.695 | 0.820 | 0.0 | 94% | 2 |
+| 静态阈值（crit） | 1.000 | 0.212 | 0.350 | 0.0 | 69% | 5 |
+| 3-Sigma | 0.988 | 0.703 | 0.822 | 0.4 | 94% | 2 |
+| MAD | 1.000 | 0.703 | 0.826 | 0.0 | 94% | 2 |
+| **MAD + EWMA + iForest 投票** | **0.976** | **0.695** | **0.812** | **0.8** | **94%** | **0** |
+
+结论：如果只按静态严重阈值报警，16 个窗口里只能检出 69%，且平均晚 5 个采样点；
+动态检测把窗口检出率提到 94%，首告警时延中位数为 0，代价是每千点 0.8 次误报。
+（warn 档静态阈值在这份合成数据上同样准确，是因为故障幅度大且阈值贴得很紧；
+真实环境里 warn 档通常会带来大量噪音，这也是动态检测存在的意义。）
+
+### 7.2 端到端流水线
+
+30 次独立运行（每次都新建 bus + orchestrator）：
+
+| 指标 | 结果 |
+|------|------|
+| 处理成功率 | 100% |
+| 自愈执行成功率 | 100% |
+| 延迟 p50 / p95 | 69.8 ms / 72.2 ms |
+| 人工审批后恢复执行 | 6/6 成功 |
+
+延迟主要是 Isolation Forest 在线拟合的开销，不含真实数据库执行时间。
+
+---
+
+## 8. 项目结构
 
 ```
-第 1 天：理解架构
-  ├── 读 README（本文件）
-  └── 读 docs/tutorial/01-getting-started.md
-
-第 2 天：跑起来
-  ├── 按快速开始运行 Python 版
-  └── 用 curl 测试各接口，观察输出
-
-第 3 天：看核心代码
-  ├── python/models/events.py     ← 理解数据流
-  ├── python/core/orchestrator.py ← 理解编排逻辑
-  └── python/agents/rca_agent.py  ← 最复杂的 Agent
-
-第 4 天：理解技术原理
-  ├── docs/tutorial/02-event-driven.md
-  ├── docs/tutorial/03-agent-design.md
-  └── docs/tutorial/04-knowledge-graph.md
-
-第 5-7 天：面试准备
-  ├── docs/interview/baguwen.md   ← 八股文
-  ├── docs/interview/star-method.md  ← 话术
-  └── docs/interview/interview-qa.md ← Q&A
+.
+├── agents/
+│   ├── base_agent.py        # 模板方法、指标、异常语义
+│   ├── monitor_agent.py     # 检测、分级、去重、收敛
+│   ├── rca_agent.py         # 图谱根因、证据、归一化贝叶斯
+│   ├── heal_agent.py        # Playbook、预检、审批后执行、熔断
+│   └── change_agent.py      # 风险模型、审批策略、审计
+├── core/
+│   ├── orchestrator.py      # 5 节点状态机、重试、检查点、resume
+│   ├── event_bus.py         # 内存/Kafka 双模
+│   ├── knowledge_graph.py   # 图算法、Neo4j 适配
+│   └── audit.py             # 哈希链审计
+├── models/
+│   ├── events.py            # 事件与状态模型
+│   └── time_series.py       # 检测算法、指标策略、数据生成
+├── api/main.py              # FastAPI 接口与指标
+├── config/settings.py       # 环境变量配置
+├── tests/                   # 108 个用例
+├── benchmarks/              # 3 个评测脚本 + 结果 JSON
+└── docs/
+    ├── architecture.md
+    ├── engineering-notes.md # 从初版到现在的 15 个工程问题
+    └── interview/           # 简历、STAR、八股、Q&A
 ```
 
 ---
 
-## ⚙️ 技术栈全览
+## 9. 初版的问题与修复
 
-| 层次 | 🐍 Python 版 | ☕ Java 版 | 🐹 Go 版 |
-|------|-------------|-----------|---------|
-| **Agent 框架** | LangGraph 状态机 | 自建状态机 + Spring | goroutine + channel |
-| **API 层** | FastAPI + Pydantic | Spring Boot 3 | Gin |
-| **事件总线** | confluent-kafka | Spring Cloud Stream | sarama |
-| **知识图谱** | Neo4j + py2neo | Spring Data Neo4j | neo4j-go-driver |
-| **时序分析** | Prophet + scikit-learn | Commons Math | gonum |
-| **向量数据库** | ChromaDB（RAG） | — | — |
-| **监控** | Prometheus Client | Micrometer | — |
-| **容器化** | Docker Compose | Docker Compose | Docker Compose |
-| **配置管理** | pydantic-settings | application.yml | 环境变量 |
+初版是「能跑起来的演示」：README 声称有 Java/Go 两套实现和 LangGraph/Prophet/ChromaDB，
+实际只有一套 Python，依赖装了但没用；`dry_run=True` 时反而执行修复，审批在执行之后；
+编排器的重试计数跨故障累积；RCA 拿着知识图谱参数却用另一份硬编码拓扑。
+
+这轮改造的完整清单（现象 / 根因 / 修复 / 验证方式）在
+[docs/engineering-notes.md](docs/engineering-notes.md)。
 
 ---
 
-## 🤝 参考的企业级开源项目
+## 10. 边界与后续
 
-本项目设计时参考了以下真实的企业级项目：
+明确没做的事，避免面试时被问穿：
 
-| 项目 | 公司/组织 | 技术特点 |
-|------|---------|---------|
-| [HolmesGPT](https://github.com/holmesgpt/holmesgpt) | CNCF Sandbox | Agentic Loop + 多数据源根因分析 |
-| [Aurora](https://github.com/arvo-ai/aurora) | Arvo AI | LangGraph + Memgraph 知识图谱 |
-| [Microsoft AIOpsLab](https://github.com/microsoft/AIOpsLab) | Microsoft | AIOps Agent 评测框架 |
-| [Auto-Agent-K8s](https://github.com/supersaiyane/auto-agent-k8s) | 社区 | K8s 故障自动修复 |
-| [Self-Healing SRE](https://github.com/jalpatel11/Self-Healing-SRE-Agent) | 社区 | LangGraph 自愈 SRE |
+- **不是 LLM Agent**：根因是规则 + 贝叶斯，没有调用大模型。图谱候选和证据链已经结构化，接入 LLM 做摘要/排序是下一步，而不是现状。
+- **执行是模拟的**：`SimulatedExecutor` 不会连 MySQL；真实执行器默认关闭。
+- **Kafka / Neo4j 只做了适配层**：本机没有 broker，未做联调；默认内存实现保证开箱即用。
+- **状态在进程内**：检查点没有落盘，重启后丢失；审计已落盘。
+- **单进程**：没有分布式锁和多副本协调，不能直接当生产控制面。
+- **评测是合成数据**：没有生产流量回放，数字只能说明方法有效，不能说明线上收益。
 
----
-
-## 📄 License
-
-MIT License — 可自由用于学习、修改和面试展示
+后续优先级：检查点持久化 → 接真实 Prometheus/MySQL 只读账号 → LLM 辅助根因排序 → Kafka 多副本。
 
 ---
 
-<div align="center">
+## 11. 面试材料
 
-**如果这个项目对你有帮助，欢迎 ⭐ Star 支持一下！**
+- [简历与面试口径写法](docs/interview/resume-template.md)
+- [STAR 话术与追问应对](docs/interview/star-method.md)
+- [工程问题复盘](docs/engineering-notes.md)
+- [架构说明](docs/architecture.md)
 
-</div>
+---
+
+## 12. 来源与致谢
+
+本仓库是 [bcefghj/multi-agent-aiops](https://github.com/bcefghj/multi-agent-aiops) 的 GitHub fork，
+不是从零实现的原创仓库：
+
+- **原项目**：[bcefghj/multi-agent-aiops](https://github.com/bcefghj/multi-agent-aiops)
+  （作者 `bcefghj`，MIT 许可，原仓库声明可自由用于学习、修改和面试展示）
+- **仓库关系**：GitHub fork（forked from `bcefghj/multi-agent-aiops`）
+- **本仓库范围**：只基于原项目的 Python 实现，未使用其 Java / Go 实现
+- **原项目版权**：归 `bcefghj` 所有；本仓库的修改部分归倪建伟
+- **改动说明**：重构为面向 MySQL 的 5 节点两阶段审批流程，接入知识图谱，
+  重写检测策略、14 个 DBA Playbook、6 因子风险模型、哈希链审计，
+  补充 108 个测试、3 个评测脚本，并修正原项目中审批/执行时序等 15 个问题。
+  详见 [docs/engineering-notes.md](docs/engineering-notes.md)。
+- **声明**：本仓库不是原项目的官方版本，也不代表原作者的观点。
+
+## License
+
+MIT，见 [LICENSE](LICENSE)。原作者的版权声明与本仓库修改部分的声明均保留在该文件中。

@@ -1,160 +1,132 @@
-# 从零开始：多 Agent AIOps 系统搭建指南
+# 从零跑通：DB-AIOps 入门
 
-> 本教程面向零基础的同学，一步一步带你理解和运行整个项目。
+> 面向第一次接触这个仓库的人。跑完这一篇，你能看到一次完整的
+> 「告警 → 根因 → 提案 → 审批 → 执行 → 审计」。
 
 ## 前置知识
 
-你需要了解以下基础概念（不需要精通）：
-- HTTP API（GET / POST 请求）
-- 微服务架构（服务拆分、服务间调用）
-- 容器化（Docker 基本概念）
+- 知道 HTTP 的 GET/POST 即可；
+- 知道 MySQL 主从复制、慢查询的大致含义更好；
+- 不需要 Docker、Kafka、Neo4j。
 
 ## 第一步：理解问题
 
-### 传统运维的痛点
+数据库运维里一次主从延迟告警，通常要经过：
 
-想象你是一家电商公司的运维工程师：
-- 公司有 50+ 微服务在 Kubernetes 上运行
-- 每天收到 200+ 条告警，70% 是重复或误报
-- 一次故障从发现到修复平均 40 分钟
-- 凌晨 3 点接到电话，赶到电脑前先花 10 分钟搞清楚哪里出问题了
+1. 看监控确认延迟多高、持续多久；
+2. 翻 CMDB 确认副本从哪个主库复制、还有谁依赖它；
+3. 翻变更记录，看最近有没有 DDL / 参数调整；
+4. 判断是 KILL 会话、重启复制、还是切读流量；
+5. 找人审批，执行，留记录。
 
-### 我们的解决方案
+项目把 1–3 做成监控 + 根因 Agent，4 做成 Playbook 提案，5 做成审批 + 执行 + 审计。
+**执行永远发生在审批之后。**
 
-用四个 AI Agent 自动化这个过程：
-
-```
-告警来了 → Agent 1 判断是否真的异常
-         → Agent 2 分析根因在哪里
-         → Agent 3 找到修复方案并执行
-         → Agent 4 审批这个操作是否安全
-         → 修复完成，全程 5 分钟
-```
-
-## 第二步：项目结构理解
+## 第二步：项目结构
 
 ```
-项目入口在哪？
-
-Python 版:  python/api/main.py        ← FastAPI 启动这里
-Java 版:    java/src/.../AiOpsApplication.java  ← Spring Boot 启动
-Go 版:      golang/cmd/server/main.go  ← Gin 启动
-
-核心 Agent 在哪？
-
-python/agents/monitor_agent.py   ← 监控告警
-python/agents/rca_agent.py       ← 根因分析
-python/agents/heal_agent.py      ← 故障自愈
-python/agents/change_agent.py    ← 变更审批
-
-编排器在哪？
-
-python/core/orchestrator.py      ← 控制 Agent 执行顺序
+api/main.py                 FastAPI 入口
+core/orchestrator.py        5 节点工作流（monitor → rca → heal → change → execute）
+core/knowledge_graph.py     服务/主从/主机拓扑与图算法
+core/event_bus.py           内存/Kafka 双模事件总线
+core/audit.py               哈希链审计
+agents/monitor_agent.py     异常检测、分级、去重
+agents/rca_agent.py         根因：图谱 + 变更 + 归一化贝叶斯
+agents/heal_agent.py        Playbook、dry-run、审批后执行
+agents/change_agent.py      6 因子风险模型、审批、工单
+models/time_series.py       检测算法与指标策略
+tests/                      108 个用例
+benchmarks/                 可复现评测
 ```
 
-## 第三步：运行 Python 版
-
-### 方式一：最简运行（不需要 Docker）
+## 第三步：安装与运行
 
 ```bash
-cd python
-pip install fastapi uvicorn pydantic pydantic-settings numpy scikit-learn structlog
+python -m venv .venv
+.venv\Scripts\activate        # macOS/Linux: source .venv/bin/activate
 
-# 启动服务
-python -m uvicorn api.main:app --reload --port 8000
-```
-
-### 方式二：完整运行（含 Kafka + Neo4j）
-
-```bash
-cd python
 pip install -r requirements.txt
-docker-compose up -d    # 启动 Kafka, Neo4j, Prometheus, Grafana
+# 网络慢可以加：-i https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+跑 Demo：
+
+```bash
+python -m core.orchestrator
+```
+
+典型输出（节选）：
+
+```
+[1] 监控告警
+    指标      : mysql_replication_lag_sec = 46.2
+    服务      : mysql-replica-2 / 严重度 critical
+    算法投票  : mad=异常, ewma=异常, iforest=异常
+
+[2] 根因分析
+    根因      : 只读副本执行 DDL 阻塞复制回放，导致延迟堆积
+    类型/置信度: replica_ddl / 0.50
+    影响链    : mysql-replica-2 → mysql-primary
+
+[3] 自愈提案（未执行）
+    Playbook  : kill_ddl [L1]
+    命令      : mysql -h db-node-3 -e "KILL QUERY 1024871;"
+    dry-run   : DRY-RUN OK: 命令通过白名单与危险模式校验
+
+[4] 变更审批
+    结果      : approved / 风险分 0.241
+    策略      : L1_ONCALL_APPROVED
+
+[5] 执行结果
+    状态      : succeeded
+```
+
+## 第四步：跑测试和评测
+
+```bash
+python -m pytest                     # 108 passed
+python -m benchmarks.detect_eval     # 检测回放
+python -m benchmarks.pipeline_eval   # 30 次端到端
+python -m benchmarks.project_stats   # 代码/测试/图谱规模
+```
+
+## 第五步：启动 API
+
+```bash
 python -m uvicorn api.main:app --reload --port 8000
 ```
 
-### 测试一下
+打开 http://localhost:8000/docs，重点试这几个：
 
 ```bash
-# 触发一次故障处理
+# 触发一次默认故障（主从延迟）
 curl -X POST http://localhost:8000/api/v1/incidents/trigger
 
-# 查看结果
-curl http://localhost:8000/api/v1/incidents
+# 查看拓扑
+curl http://localhost:8000/api/v1/topology/mysql-replica-2/dependencies
 
-# 运行异常检测 Demo
-curl http://localhost:8000/api/v1/anomaly/demo
-
-# 查看服务拓扑
-curl http://localhost:8000/api/v1/topology
+# 查看审计链是否完整
+curl http://localhost:8000/api/v1/audit/verify
 ```
 
-## 第四步：运行 Demo 演示
-
-```bash
-# 直接运行 Orchestrator 的 demo 模式
-cd python
-python -c "import asyncio; from core.orchestrator import run_demo; asyncio.run(run_demo())"
-```
-
-这会模拟一次完整的故障处理流程，输出类似：
+## 第六步：代码执行流程
 
 ```
-============================================================
-  故障处理结果
-============================================================
-  事件 ID:    abc-123-def
-  状态:       resolved
-
-  [告警]
-    名称:     high_cpu_usage
-    严重度:   high
-    服务:     order-service
-
-  [根因分析]
-    根因:     近期代码部署引入性能退化
-    置信度:   0.54
-    建议动作: rollback, profiling
-
-  [自愈]
-    操作:     rollback
-    级别:     L1
-    爆炸半径: 0.15
-
-  [审批]
-    状态:     approved
-    风险分:   0.158
-    审批人:   oncall-engineer
-============================================================
-```
-
-## 第五步：理解代码执行流程
-
-```
-1. Orchestrator.run() 被调用
-2. MonitorAgent.process()
-   → 检测指标异常（Demo 模式生成模拟告警）
-   → 生成 AlertEvent: CPU 95.3% > 80%
-3. 条件检查：alert_event != None → 执行 RCA
-4. RCAAgent.process()
-   → 追踪依赖链：order-service → payment/inventory/user
-   → 发现近期变更：deploy v2.3.1
-   → 贝叶斯推理：P(deploy|anomaly) = 0.54
-   → 建议动作：rollback
-5. 条件检查：confidence 0.54 >= 0.3 → 执行 Heal
-6. HealAgent.process()
-   → 匹配 Playbook：rollback (L1)
-   → dry-run 验证命令
-   → 生成修复方案
-7. ChangeAgent.process()
-   → 风险评分：0.158
-   → L1 + risk <= 0.5 → oncall 自动审批
-   → 状态变为 resolved
+1. Orchestrator.run()
+2. MonitorAgent：历史基线 → MAD/EWMA/iForest 投票 → 分级 → 去重 → AlertEvent
+3. 条件：alert_event 存在 → RCAAgent
+4. RCAAgent：图谱依赖链 + 24h 变更 + 证据 → 归一化后验
+   置信度 < 0.30 或领先 < 0.05 → needs_human → 跳过自愈
+5. HealAgent：匹配 Playbook → 爆炸半径 → dry-run → HealEvent(proposed)
+6. ChangeAgent：6 因子风险 → L0 自动 / L1 当班 / L2 工单
+   pending → 工作流中断，等 /approve
+7. HealAgent.execute：校验 approved → 白名单 → 幂等 → 执行 → 失败回滚
+8. AuditSink：审批与执行事件写入哈希链
 ```
 
 ## 下一步
 
-- [02-event-driven.md](02-event-driven.md) — 深入理解事件驱动架构
-- [03-agent-design.md](03-agent-design.md) — Agent 设计模式详解
-- [04-knowledge-graph.md](04-knowledge-graph.md) — 知识图谱详解
-- [05-deploy.md](05-deploy.md) — 生产部署指南
+- [02-event-driven.md](02-event-driven.md) — 事件与解耦
+- [03-agent-design.md](03-agent-design.md) — 四个 Agent 的设计细节
+- [04-knowledge-graph.md](04-knowledge-graph.md) — 图谱与根因算法
+- [05-deploy.md](05-deploy.md) — 部署与边界

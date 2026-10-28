@@ -1,6 +1,8 @@
-# 八股文 — AIOps 多 Agent 面试核心知识点
+# 八股文 — 数据库运维 / AIOps 核心知识点
 
-> 按照面试频率排序，覆盖分布式系统、Agent 框架、时序分析、知识图谱、Kafka 等方向。
+> 按面试频率排序。**口径**：本项目是 Python 单语言、规则 + 贝叶斯，没有用 LangGraph /
+> Prophet / ChromaDB，也没有 Java/Go 实现。文中标注「扩展」的内容属于通用知识或后续方向，
+> 面试时不要把它说成项目现状。
 
 ---
 
@@ -92,14 +94,19 @@ Reasoning + Acting 的循环：
 ```
 思考 → 决定行动 → 执行工具 → 观察结果 → 再思考 → ...
 ```
-LLM Agent 的核心模式。我们的 RCA Agent 类似：分析告警 → 决定查询知识图谱 → 观察依赖关系 → 推理根因。
+这是 LLM Agent 的典型模式。本项目的 RCA 是「观察 → 查图谱 → 收集证据 → 打分」，
+形状相似，但**没有 LLM 参与**，是确定性规则 + 贝叶斯。
 
-### 10. LangGraph 的核心概念？
+### 10. LangGraph 的核心概念？（扩展，本项目未使用）
 
-- **Node**: 图中的节点，对应一个处理函数（Agent）
-- **Edge**: 节点间的连接，可以是条件边
-- **State**: 全局状态对象，在节点间流转
-- **Checkpointer**: 状态持久化，支持断点恢复
+- **Node**：图中的节点，对应一个处理函数（Agent）
+- **Edge**：节点间的连接，可以是条件边
+- **State**：全局状态对象，在节点间流转
+- **Checkpointer**：状态持久化，支持断点恢复
+
+本项目自己实现了简化的状态机：`NodeSpec` 对应节点，`condition` 对应条件边，
+`IncidentState` 对应 State，内存检查点对应 Checkpointer。差别是没有做图的可视化和
+持久化后端，也没有 LangGraph 的流式执行。
 
 ---
 
@@ -119,8 +126,10 @@ LLM Agent 的核心模式。我们的 RCA Agent 类似：分析告警 → 决定
 动态：根据历史数据学习"正常范围"，超出正常范围才报警。
 
 实现方式：
-- Prophet 预测 + 残差分析（残差超过 3σ 为异常）
-- EWMA 滑动窗口（窗口内均值 ± 3 × 标准差）
+- MAD（中位数 + 绝对偏差）：对长尾指标鲁棒，适合主从延迟、慢查询
+- EWMA 滑动窗口（窗口内均值 ± 3 × 标准差）：适合缓慢漂移
+- Isolation Forest：无分布假设，适合多维异常
+本项目的动态检测由这三种算法投票完成，没有用 Prophet。
 
 ### 13. 多算法投票机制的原理？
 
@@ -201,9 +210,11 @@ kubectl apply -f deploy.yaml --dry-run=server
 
 # Ansible
 ansible-playbook playbook.yml --check
-
-# 我们的实现：解析命令 → 语法检查 → 权限检查 → 返回模拟结果
 ```
+
+本项目的实现更轻：`CommandExecutor.preflight()` 校验命令非空、首 token 在白名单、
+不命中危险模式（DROP TABLE、rm -rf、管道、命令替换），返回可读的预检结果；
+它不连接数据库，也不执行 SQL。
 
 ---
 
@@ -215,9 +226,10 @@ ansible-playbook playbook.yml --check
 - A (Availability): 可用性
 - P (Partition tolerance): 分区容错
 
-三者只能满足两个。本项目选择 AP：
+三者只能满足两个。本项目默认单进程、内存状态，谈不上 CAP 取舍；
+如果切到 Kafka + 多副本，选择的是 AP：
 - Kafka 保证高可用 + 分区容错
-- 通过最终一致性保证数据一致
+- 通过最终一致性保证数据一致（event_id 幂等、DLQ、人工补偿）
 
 ### 21. Saga 模式？
 
@@ -229,13 +241,12 @@ Agent 1 成功 → Agent 2 成功 → Agent 3 失败
               Agent 2 补偿 ← Agent 3 补偿
 ```
 
-本项目的事件处理流程就是一个 Saga：
-- 每个 Agent 是一个本地事务
-- 失败时通过编排器触发补偿（如回滚修复操作）
+本项目的失败补偿是「回滚命令 + 熔断 + 人工审批」，更接近编排式补偿，
+不是严格意义上的 Saga（没有全局事务日志和正向/反向补偿队列）。
 
 ---
 
-## 八、设计模式（Java 重点）
+## 八、设计模式
 
 ### 22. 本项目用了哪些设计模式？
 
@@ -248,7 +259,7 @@ Agent 1 成功 → Agent 2 成功 → Agent 3 失败
 
 ---
 
-## 九、Go 特色（Go 岗位重点）
+## 九、并发模型对比（扩展阅读，本项目未使用 Go）
 
 ### 23. goroutine vs Java Thread？
 
@@ -271,4 +282,4 @@ go rcaAgent.Run(alertCh, healCh) // 消费告警，产出修复方案
 
 - `sync.Map`: 读多写少场景优化（内部用 read-only map + dirty map）
 - `map + Mutex`: 写多场景更好
-- 本项目用 `sync.Map` 存储检查点（读 > 写）
+- 本项目没有用 Go，检查点是普通 dict + 深拷贝；如果多实例部署，才需要外置存储和分布式锁

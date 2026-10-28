@@ -1,79 +1,81 @@
-# 简历模板 — 多 Agent AIOps 项目
+# 简历写法（按岗位方向）
 
-> 根据你面试的岗位方向（Python/Java/Go），调整技术栈描述。
-
----
-
-## 模板一：Python / AI 方向
-
-```
-多 Agent 智能运维系统 (AIOps)                         2025.xx - 至今
-技术栈：Python / LangGraph / Kafka / Neo4j / Prometheus / FastAPI / Docker
-
-● 设计并实现基于事件驱动架构的多 Agent 协作系统，包含监控告警、根因分析、
-  故障自愈、变更审批 4 个专业 Agent，通过 Kafka 事件总线解耦通信
-
-● 基于 Neo4j 构建微服务拓扑知识图谱（11 个服务节点 + 15 条依赖关系），
-  实现 BFS 图遍历 + 贝叶斯推理的根因定位算法，MTTR 从 40min 降至 5min
-
-● 集成 3-Sigma / EWMA / Isolation Forest 三算法投票的动态阈值异常检测，
-  相比静态阈值误报率降低 85%，告警准确率提升至 92%
-
-● 设计三级自愈策略（L0 全自动 / L1 半自动 / L2 人工审批），配合熔断器 +
-  dry-run + 爆炸半径评估等安全护栏，自动修复覆盖 60%+ 常见故障场景
-```
-
-## 模板二：Java 后端方向
-
-```
-多 Agent 智能运维平台 (AIOps)                         2025.xx - 至今
-技术栈：Java 21 / Spring Boot 3 / Spring Kafka / Spring Data Neo4j / Prometheus
-
-● 基于 Spring Boot 构建企业级多 Agent 运维平台，采用策略模式 + 模板方法模式
-  + 责任链模式实现 Agent 编排，通过 Kafka 事件总线实现 Agent 间异步解耦
-
-● 使用 Spring Data Neo4j 构建服务拓扑知识图谱，支持 Cypher 多跳查询的
-  根因分析算法，将故障定位时间从平均 40 分钟缩短至 5 分钟
-
-● 实现 ConcurrentHashMap + DoubleSummaryStatistics 的高性能时序异常检测，
-  支持 3-Sigma 统计异常检测，告警准确率 92%
-
-● 设计 L0/L1/L2 分级审批 + 熔断器模式（AtomicInteger 无锁计数），
-  60%+ 常见故障实现自动修复，支持 Prometheus + Micrometer 全链路指标暴露
-```
-
-## 模板三：Go / 云原生方向
-
-```
-多 Agent 智能运维系统 (AIOps)                         2025.xx - 至今
-技术栈：Go 1.23 / Gin / sarama (Kafka) / Neo4j / Prometheus / Kubernetes
-
-● 基于 Go interface + goroutine/channel 构建轻量级多 Agent 编排框架，
-  4 个 Agent 通过 Kafka 事件总线异步协作，支持条件路由和失败重试
-
-● 使用 sync.Map + atomic 操作实现无锁高并发的时序数据存储和异常检测，
-  单实例支持 10K+ QPS 的指标处理吞吐量
-
-● 实现知识图谱驱动的根因分析（BFS 遍历 + 贝叶斯推理），MTTR 降低 87%
-
-● 设计 goroutine 安全的熔断器（CLOSED/OPEN/HALF_OPEN 状态机），
-  配合 dry-run + 爆炸半径评估的安全护栏链，保障自愈操作安全性
-```
+> 说明：个人简历不随公开仓库发布（含手机号、邮箱），本文只保留不同岗位的写法参考。
+> 本文只保留「不同岗位怎么改」的差异，避免同一份简历投所有方向。
 
 ---
 
-## 简历 Tips
+## 先定口径
 
-### DO ✓
+这是**个人独立项目**，不是公司上线系统。简历里可以写「设计并实现」「自建回放集」，
+不能写「上线后 MTTR 降低 87%」「支撑 10K QPS」「团队 2-3 人」。
+面试官打开仓库能对上的，才是有效信息。
 
-- 每条用「动作 + 方法 + 量化结果」结构
-- 技术栈写具体版本号（Spring Boot 3 而不是 Spring Boot）
-- 量化数据要合理（不要写 99.99% 之类夸张的数据）
-- 项目描述 4 条即可，控制在半页以内
+---
 
-### DON'T ✗
+## 版本一：数据库运维 / DBA（主投方向）
 
-- 不要写"参与了 xx 项目"，要写"设计并实现了 xx"
-- 不要罗列技术栈不解释做了什么
-- 不要写"负责后端开发"，要写具体负责的模块
-- 数据不要太夸张（面试官会追问细节）
+```
+DB-AIOps · 数据库智能运维多 Agent 平台（个人项目）        2026.03 – 2026.10
+技术栈：Python 3.10 / FastAPI / NumPy / scikit-learn / MySQL / Prometheus / pytest
+
+● 设计 4 Agent + 5 节点状态机，自愈拆为 propose/execute 两阶段，
+  执行前强制校验 approved 变更单，未审批抛 PermissionError；
+  pending 工单通过 resume 只重跑执行节点，节点失败即终止
+● 面向 5 个 MySQL 指标实现方向化检测（MAD + EWMA + iForest 投票，
+  冷启动弃权、指纹去重、服务级收敛），16 窗口回放检出率 94%、
+  首告警时延中位 0 点、每千点误报 0.8 次
+● 基于 13 节点 / 17 边服务-主从-主机图谱做根因：反向 BFS + 24h 变更关联
+  + 归一化贝叶斯，置信度 <0.30 或领先 <0.05 自动转人工
+● 设计 14 个 DBA Playbook 与 6 因子风险模型，L0/L1/L2 分级审批；
+  DDL 业务时段强制挂起，叠加白名单、dry-run、幂等、熔断、回滚
+● 哈希链审计（prev_hash + SHA256）落盘可校验；30 次端到端回放
+  成功率 100%、p50 69.8ms/p95 72.2ms；108 个 pytest 用例
+```
+
+## 版本二：SRE / 运维平台
+
+突出「变更安全 + 可观测 + 故障闭环」，弱化 MySQL 细节：
+
+- 5 节点编排 + 检查点恢复 + 人工审批中断，强调「失败即停」和「无审批不执行」
+- 审计哈希链、Prometheus 指标、告警收敛，强调合规和可观测
+- Playbook 与风险模型可以换成 K8s 场景（重启 Pod、扩容、回滚），但**代码要真的改**，
+  不要只改简历
+
+## 版本三：Python 后端 / AI 应用
+
+突出工程能力，而不是「AI」：
+
+- asyncio + FastAPI + Pydantic v2，17 个接口，`create_app()` 工厂便于测试
+- 事件总线抽象（内存/Kafka 双模）、依赖注入、策略模式、模板方法
+- 108 个测试、3 个可复现评测脚本，强调「先能验证，再谈效果」
+- 如果投 AI 岗，明确说「规则 + 贝叶斯，不是 LLM」，并讲清 LLM 应接在候选排序层
+
+---
+
+## 每条 bullet 的结构
+
+`动作 + 技术方案 + 可验证结果`
+
+- 动作：设计 / 实现 / 重构 / 修复
+- 方案：具体到算法、数据结构、协议，不写「使用了 xx 技术」
+- 结果：数字必须能指向仓库里的脚本或测试
+
+## 数字口径表
+
+| 数字 | 来源 | 备注 |
+|------|------|------|
+| 108 个用例 | `python -m pytest` | 本地实测 |
+| 13 节点 / 17 边 | `kg.summary()` | 演示拓扑 |
+| 14 个 Playbook | `PLAYBOOKS` | L0 4 / L1 7 / L2 3 |
+| 检出率 94% / 时延 0 点 / 误报 0.8‰ | `benchmarks/detect_results.json` | 合成数据，5×600 点，16 窗口 |
+| p50 69.8ms / p95 72.2ms | `benchmarks/pipeline_results.json` | 30 次回放，模拟执行 |
+| 4088 行源码 | `benchmarks/project_stats.json` | 不含测试与评测 |
+
+## 不要写
+
+- 「上线后 MTTR 从 40 分钟降到 5 分钟」——没有生产数据
+- 「基于 LangGraph / Prophet / ChromaDB」——代码里没有
+- 「Java / Go 双实现」——仓库里没有
+- 「支撑 10K QPS」——没有压测
+- 「负责核心模块」——个人项目，直接写「设计并实现」
